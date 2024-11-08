@@ -42,13 +42,13 @@ func NewProcessor(conf *config.Config, logr *zap.Logger, errorWriter *kafka.Writ
 
 	if conf.HttpHeaders != nil {
 		for _, head := range *conf.HttpHeaders {
-			heads := strings.Split(head, "=")
-			if len(heads) != 2 {
+			heads := strings.Split(head, ":")
+			if len(heads) < 2 {
 				panic("header should have key and value")
 			}
 			headers = append(headers, httpHeader{
 				key:   heads[0],
-				value: heads[1],
+				value: strings.Join(heads[1:], ""),
 			})
 		}
 	}
