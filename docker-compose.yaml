@@ -1,0 +1,68 @@
+services:
+  worker:
+    build:
+      context: "."
+      dockerfile: "./build/local.Dockerfile"
+      args:
+        CMD_PATH: cmd/worker/worker
+    env_file: ./.env
+    environment:
+      CMD_PATH: cmd/worker/worker
+    volumes:
+      - ".:/go/src/go-kafka-http-sink"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - go_net
+  zookeeper1:
+    image: bitnami/zookeeper:3.7.0-debian-10-r264
+    platform: linux/amd64
+    volumes:
+      - zookeeper1:/bitnami/zookeeper
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    networks:
+      go_net:
+        aliases:
+          - "zookeeper"
+  kafka1:
+    image: bitnami/kafka:2.8.0-debian-10-r84
+    platform: linux/amd64
+    volumes:
+      - kafka1:/bitnami/kafka
+    depends_on:
+      - zookeeper1
+    environment:
+      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+      - ALLOW_PLAINTEXT_LISTENER=yes
+      - KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=INTERNAL:PLAINTEXT,CLIENT:PLAINTEXT
+      - KAFKA_CFG_LISTENERS=INTERNAL://:9093,CLIENT://:9092
+      - KAFKA_CFG_ADVERTISED_LISTENERS=INTERNAL://kafka1:9093,CLIENT://kafka1:9092
+    networks:
+      go_net:
+        aliases:
+          - "kafka"
+          - "broker"
+  akhq:
+    image: tchiotludo/akhq:0.24.0
+    environment:
+      AKHQ_CONFIGURATION: |
+        akhq:
+          connections:
+            local:
+              properties:
+                bootstrap.servers: "kafka:9092"
+
+    ports:
+      - 8080:8080
+    networks:
+      go_net:
+
+networks:
+  go_net:
+    driver: bridge
+
+volumes:
+  zookeeper1:
+  kafka1:
