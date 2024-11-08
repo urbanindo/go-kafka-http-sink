@@ -88,15 +88,6 @@ func (h *httpProcessor) Process(ctx context.Context, msg kafka.Message) error {
 		Post(h.url)
 
 	if err != nil {
-		if h.errorWriter != nil {
-			err2 := h.errorWriter.WriteMessages(ctx, kafka.Message{
-				Key:   msg.Key,
-				Value: []byte(fmt.Sprint("Failed with error", err)),
-			})
-			if err2 != nil {
-				return fmt.Errorf("error when writing to error topic: %v", err2)
-			}
-		}
 		return err
 	}
 
@@ -111,6 +102,7 @@ func (h *httpProcessor) Process(ctx context.Context, msg kafka.Message) error {
 		return fmt.Errorf("error from http with status code '%d': %s", res.StatusCode(), string(res.Body()))
 	}
 
+	h.logr.Debug("got " + res.Status() + " with body " + string(res.Body()))
 	if h.successWriter != nil {
 		return h.successWriter.WriteMessages(ctx, kafka.Message{
 			Key:   msg.Key,
