@@ -44,6 +44,17 @@ services:
         aliases:
           - "kafka"
           - "broker"
+  schema-registry:
+    image: bitnami/schema-registry:7.6.0
+    ports:
+      - "8081:8081"
+    depends_on:
+      - kafka1
+    networks:
+      go_net:
+    environment:
+      - SCHEMA_REGISTRY_HOST_NAME=schema-registry
+      - SCHEMA_REGISTRY_KAFKA_BROKERS=PLAINTEXT://broker:9092
   akhq:
     image: tchiotludo/akhq:0.24.0
     environment:
@@ -53,6 +64,8 @@ services:
             local:
               properties:
                 bootstrap.servers: "kafka:9092"
+              schema-registry:
+                url: "http://schema-registry:8081"
 
     ports:
       - 8080:8080

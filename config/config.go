@@ -26,6 +26,7 @@ type KafkaConfig struct {
 	Topic             string            `envconfig:"TOPIC"`
 	ErrorTopic        *string           `envconfig:"ERROR_TOPIC"`
 	SuccessTopic      *string           `envconfig:"SUCCESS_TOPIC"`
+	SchemaRegistryUrl *string           `envconfig:"SCHEMA_REGISTRY_URL"`
 	ConsumerGroupName string            `envconfig:"CONSUMER_GROUP_NAME"`
 }
 

@@ -38,7 +38,34 @@ func main() {
 	})
 	defer kafkaReader.Close()
 
-	proc := processor.NewProcessor(conf)
+	var (
+		eWriter *kafka.Writer
+		sWriter *kafka.Writer
+	)
+
+	if conf.KafkaConfig.SuccessTopic != nil {
+		sWriter = kafka.NewWriter(kafka.WriterConfig{
+			Brokers: []string{
+				fmt.Sprintf("%s:%s", conf.KafkaConfig.Broker.Host, conf.KafkaConfig.Broker.Port),
+			},
+			Topic:    *conf.KafkaConfig.SuccessTopic,
+			Balancer: kafka.Murmur2Balancer{},
+		})
+		logr.Debug("initiate kafka writer for success message")
+	}
+
+	if conf.KafkaConfig.ErrorTopic != nil {
+		eWriter = kafka.NewWriter(kafka.WriterConfig{
+			Brokers: []string{
+				fmt.Sprintf("%s:%s", conf.KafkaConfig.Broker.Host, conf.KafkaConfig.Broker.Port),
+			},
+			Topic:    *conf.KafkaConfig.ErrorTopic,
+			Balancer: kafka.Murmur2Balancer{},
+		})
+		logr.Debug("initiate kafka writer for error message")
+	}
+
+	proc := processor.NewProcessor(conf, logr, eWriter, sWriter)
 
 	logr.Info("kafka http sink worker started. start for message...")
 	for {
