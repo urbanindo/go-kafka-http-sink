@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	"github.com/go-resty/resty/v2"
+	"github.com/linkedin/goavro/v2"
 	"github.com/riferrei/srclient"
 	"github.com/segmentio/kafka-go"
 	"github.com/urbanindo/go-kafka-http-sink/config"
-	"github.com/urbanindo/go-kafka-http-sink/pkg/dto"
 	"go.uber.org/zap"
 )
 
@@ -115,12 +115,22 @@ func (h *httpProcessor) Process(ctx context.Context, msg kafka.Message) error {
 func convertFromSchemaRegistry(sr *srclient.SchemaRegistryClient, msg kafka.Message) ([]byte, error) {
 	schemaID := binary.BigEndian.Uint32(msg.Value[1:5])
 	schema, err := sr.GetSchema(int(schemaID))
-
 	if err != nil {
 		return []byte{}, fmt.Errorf("error getting the schema with id '%d' %s", schemaID, err)
 	}
 
-	native, _, _ := schema.Codec().NativeFromBinary(msg.Value[5:])
+	codec, err := goavro.NewCodecForStandardJSONFull(schema.Schema())
+	if err != nil {
+		return nil, fmt.Errorf("error initiate new avro codec: %s", err.Error())
+	}
+	native, _, err := codec.NativeFromBinary(msg.Value[5:])
+	if err != nil {
+		return nil, fmt.Errorf("error encode native from binary: %s", err.Error())
+	}
+	jsonStr, err := codec.TextualFromNative(nil, native)
+	if err != nil {
+		return nil, fmt.Errorf("error encode textual from native: %s", err.Error())
+	}
 
-	return dto.ConvertKafkaNativeToJson(native)
+	return jsonStr, nil
 }
