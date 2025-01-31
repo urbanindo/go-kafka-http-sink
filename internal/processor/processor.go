@@ -1,10 +1,13 @@
 package processor
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/linkedin/goavro/v2"
@@ -73,6 +76,13 @@ func (h *httpProcessor) Process(ctx context.Context, msg kafka.Message) error {
 		if err != nil {
 			return err
 		}
+	} else if isOtherDecoderbufsFormat(msg.Value) {
+		// If Schema Registry is not available, check if the message is in decoderbufs format
+		// Sanitize the payload (remove leading null bytes and re-serialize to clean JSON)
+		value, err = sanitizePayload(msg.Value)
+		if err != nil {
+			return fmt.Errorf("payload sanitization failed: %v", err)
+		}
 	} else {
 		value = msg.Value
 	}
@@ -82,7 +92,15 @@ func (h *httpProcessor) Process(ctx context.Context, msg kafka.Message) error {
 	for _, header := range h.headers {
 		r.SetHeader(header.key, header.value)
 	}
-	r.SetHeader("kafka_key", string(msg.Key))
+
+	r.SetHeader("kafka_key", sanitizeKey(msg.Key))
+
+	for _, msgHeader := range msg.Headers {
+		// based on existing logic no need to add id header
+		if msgHeader.Key != "id" {
+			r.SetHeader(msgHeader.Key, string(msgHeader.Value))
+		}
+	}
 
 	res, err := r.SetBody(value).
 		Post(h.url)
@@ -133,4 +151,49 @@ func convertFromSchemaRegistry(sr *srclient.SchemaRegistryClient, msg kafka.Mess
 	}
 
 	return jsonStr, nil
+}
+
+func sanitizePayload(value []byte) ([]byte, error) {
+
+	trimmedValue := bytes.TrimLeftFunc(value, func(r rune) bool {
+		return !(r == '{' || r == '[' || r == ' ' || r == '\n' || r == '\t' || r == '\r' || (r >= '0' && r <= '9'))
+	})
+
+	var temp interface{}
+	err := json.Unmarshal(trimmedValue, &temp)
+	if err != nil {
+		return nil, fmt.Errorf("invalid JSON payload: %w", err)
+	}
+
+	cleanedValue, _ := json.Marshal(temp)
+
+	return cleanedValue, nil
+}
+
+// isOtherDecoderbufsFormat checks whether the given payload follows a specific decoderbufs-like format.
+// The function assumes the payload contains a schema ID as the first 4 bytes.
+// If the schema ID is 0, it considers the payload to match the decoderbufs format.
+// This helps identify messages that require specific handling or sanitization.
+func isOtherDecoderbufsFormat(value []byte) bool {
+	if len(value) < 5 {
+		return false
+	}
+
+	schemaID := binary.BigEndian.Uint32(value[:4])
+	return schemaID == 0
+}
+
+
+// sanitizeKey ensures Kafka message keys are clean and valid for downstream use, such as in HTTP headers.
+// Kafka keys may contain null bytes, non-printable, or invalid characters, causing issues in systems expecting clean strings.
+// This function trims unnecessary characters and sanitizes the key only when needed, preserving compatibility and data integrity.
+func sanitizeKey(key []byte) string {
+	trimmed := strings.TrimSpace(string(bytes.Trim(key, "\x00")))
+	var builder strings.Builder
+	for _, r := range trimmed {
+		if unicode.IsPrint(r) {
+			builder.WriteRune(r)
+		}
+	}
+	return builder.String()
 }
