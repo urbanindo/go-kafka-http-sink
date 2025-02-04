@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	"github.com/linkedin/goavro/v2"
+	"github.com/pkg/errors"
 	"github.com/riferrei/srclient"
 	"github.com/segmentio/kafka-go"
 	"github.com/urbanindo/go-kafka-http-sink/config"
@@ -28,7 +29,7 @@ type httpProcessor struct {
 	url           string
 	logr          *zap.Logger
 	headers       []httpHeader
-	errorWriter   *kafka.Writer
+	errorWriter   ErrorWriter
 	successWriter *kafka.Writer
 }
 
@@ -62,7 +63,7 @@ func NewProcessor(conf *config.Config, logr *zap.Logger, errorWriter *kafka.Writ
 		headers:       headers,
 		logr:          logr,
 		sr:            schemaRegistryClient,
-		errorWriter:   errorWriter,
+		errorWriter:   NewErrorWriter(errorWriter),
 		successWriter: successWriter,
 	}
 }
@@ -110,11 +111,11 @@ func (h *httpProcessor) Process(ctx context.Context, msg kafka.Message) error {
 	}
 
 	if res.StatusCode() >= 300 && h.errorWriter != nil {
-		err = h.errorWriter.WriteMessages(ctx, kafka.Message{
-			Key:   msg.Key,
-			Value: []byte(fmt.Sprintf("Failed from http with status code '%d': %s", res.StatusCode(), string(res.Body()))),
-		})
-		if err != nil {
+		if err := h.errorWriter.WriteError(ctx, msg.Key, &ErrorPayload{
+			ResponseBody:    fmt.Sprintf("%s", res.Body()),
+			ResponseCode:    res.StatusCode(),
+			RequestBodyJSON: value,
+		}); err != nil {
 			return fmt.Errorf("error when writing to error topic: %v", err)
 		}
 		return fmt.Errorf("error from http with status code '%d': %s", res.StatusCode(), string(res.Body()))
@@ -153,6 +154,42 @@ func convertFromSchemaRegistry(sr *srclient.SchemaRegistryClient, msg kafka.Mess
 	return jsonStr, nil
 }
 
+type ErrorPayload struct {
+	ResponseBody    string          `json:"response_body"`
+	ResponseCode    int             `json:"response_code"`
+	RequestBodyJSON json.RawMessage `json:"request_body_json"`
+}
+
+type ErrorWriter interface {
+	WriteError(ctx context.Context, key []byte, errPayload *ErrorPayload) error
+}
+
+func NewErrorWriter(kafkaWriter *kafka.Writer) ErrorWriter {
+	return &errorWriter{
+		writer: kafkaWriter,
+	}
+}
+
+type errorWriter struct {
+	writer *kafka.Writer
+}
+
+func (e *errorWriter) WriteError(ctx context.Context, key []byte, errPayload *ErrorPayload) error {
+	value, err := json.Marshal(errPayload)
+	if err != nil {
+		return errors.Wrap(err, "WriteError: failed to marshal payload")
+	}
+
+	if err := e.writer.WriteMessages(ctx, kafka.Message{
+		Key:   key,
+		Value: value,
+	}); err != nil {
+		return errors.Wrap(err, "WriteError: failed write to kafka")
+	}
+
+	return nil
+}
+
 func sanitizePayload(value []byte) ([]byte, error) {
 
 	trimmedValue := bytes.TrimLeftFunc(value, func(r rune) bool {
@@ -182,7 +219,6 @@ func isOtherDecoderbufsFormat(value []byte) bool {
 	schemaID := binary.BigEndian.Uint32(value[:4])
 	return schemaID == 0
 }
-
 
 // sanitizeKey ensures Kafka message keys are clean and valid for downstream use, such as in HTTP headers.
 // Kafka keys may contain null bytes, non-printable, or invalid characters, causing issues in systems expecting clean strings.
