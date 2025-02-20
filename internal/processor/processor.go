@@ -191,9 +191,9 @@ func (e *errorWriter) WriteError(ctx context.Context, key []byte, errPayload *Er
 }
 
 func sanitizePayload(value []byte) ([]byte, error) {
-
 	trimmedValue := bytes.TrimLeftFunc(value, func(r rune) bool {
-		return !(r == '{' || r == '[' || r == ' ' || r == '\n' || r == '\t' || r == '\r' || (r >= '0' && r <= '9'))
+		// Remove everything until we reach '{' or '[' that come from header of []byte to get exact body
+		return !(r == '{' || r == '[')
 	})
 
 	var temp interface{}
