@@ -7,7 +7,7 @@ require (
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/linkedin/goavro/v2 v2.12.0
 	github.com/riferrei/srclient v0.7.0
-	github.com/segmentio/kafka-go v0.4.47
+	github.com/segmentio/kafka-go v0.4.48
 	go.elastic.co/ecszap v1.0.3
 	go.uber.org/zap v1.27.0
 )
