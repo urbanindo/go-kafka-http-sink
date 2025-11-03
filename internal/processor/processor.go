@@ -27,6 +27,7 @@ type httpProcessor struct {
 	http          *resty.Client
 	sr            *srclient.SchemaRegistryClient
 	url           string
+	method        string
 	logr          *zap.Logger
 	headers       []httpHeader
 	errorWriter   ErrorWriter
@@ -57,9 +58,26 @@ func NewProcessor(conf *config.Config, logr *zap.Logger, errorWriter *kafka.Writ
 		}
 	}
 
+	// Set HTTP method, default to POST if not specified
+	method := "POST"
+	if conf.HttpMethod != nil {
+		method = strings.ToUpper(*conf.HttpMethod)
+		// Validate allowed HTTP methods
+		validMethods := map[string]bool{
+			"POST":   true,
+			"PUT":    true,
+			"PATCH":  true,
+			"DELETE": true,
+		}
+		if !validMethods[method] {
+			panic(fmt.Sprintf("invalid HTTP method: %s. Allowed methods: POST, PUT, PATCH, DELETE", method))
+		}
+	}
+
 	return httpProcessor{
 		http:          r,
 		url:           conf.HttpApiUrl,
+		method:        method,
 		headers:       headers,
 		logr:          logr,
 		sr:            schemaRegistryClient,
@@ -103,8 +121,23 @@ func (h *httpProcessor) Process(ctx context.Context, msg kafka.Message) error {
 		}
 	}
 
-	res, err := r.SetBody(value).
-		Post(h.url)
+	// Set request body once
+	r.SetBody(value)
+
+	// Execute HTTP request based on configured method
+	var res *resty.Response
+	switch h.method {
+	case "POST":
+		res, err = r.Post(h.url)
+	case "PUT":
+		res, err = r.Put(h.url)
+	case "PATCH":
+		res, err = r.Patch(h.url)
+	case "DELETE":
+		res, err = r.Delete(h.url)
+	default:
+		return fmt.Errorf("unsupported HTTP method: %s", h.method)
+	}
 
 	if err != nil {
 		return err

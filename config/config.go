@@ -33,6 +33,7 @@ type KafkaConfig struct {
 type Config struct {
 	KafkaConfig KafkaConfig `envconfig:"KAFKA"`
 	HttpApiUrl  string      `envconfig:"HTTP_API_URL"`
+	HttpMethod  *string     `envconfig:"HTTP_METHOD"` // Default: POST
 	HttpHeaders *[]string   `envconfig:"HTTP_HEADERS"`
 }
 
