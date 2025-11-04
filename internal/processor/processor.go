@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 	"unicode"
 
@@ -28,6 +29,7 @@ type httpProcessor struct {
 	sr            *srclient.SchemaRegistryClient
 	url           string
 	method        string
+	pathParam     *string
 	logr          *zap.Logger
 	headers       []httpHeader
 	errorWriter   ErrorWriter
@@ -78,12 +80,41 @@ func NewProcessor(conf *config.Config, logr *zap.Logger, errorWriter *kafka.Writ
 		http:          r,
 		url:           conf.HttpApiUrl,
 		method:        method,
+		pathParam:     conf.HttpPathParam,
 		headers:       headers,
 		logr:          logr,
 		sr:            schemaRegistryClient,
 		errorWriter:   NewErrorWriter(errorWriter),
 		successWriter: successWriter,
 	}
+}
+
+// parseURL builds the final URL with path parameter substitution if configured.
+// It validates and sanitizes the message key, URL-encodes it, and substitutes it into the base URL.
+// Returns error if key is empty after sanitization or placeholder is not found in URL.
+func (h *httpProcessor) parseURL(msgKey []byte) (string, error) {
+	// If no path parameter is configured, return base URL
+	if h.pathParam == nil {
+		return h.url, nil
+	}
+
+	// Sanitize the message key
+	sanitizedKey := sanitizeKey(msgKey)
+	if sanitizedKey == "" {
+		err := fmt.Errorf("message key is empty after sanitization, cannot substitute path parameter %s", *h.pathParam)
+		return "", err
+	}
+
+	// URL-encode the sanitized key
+	encodedKey := url.PathEscape(sanitizedKey)
+
+	// Substitute the path parameter
+	finalURL, err := substitutePathParam(h.url, *h.pathParam, encodedKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to substitute path parameter: %w", err)
+	}
+
+	return finalURL, nil
 }
 
 func (h *httpProcessor) Process(ctx context.Context, msg kafka.Message) error {
@@ -124,17 +155,23 @@ func (h *httpProcessor) Process(ctx context.Context, msg kafka.Message) error {
 	// Set request body once
 	r.SetBody(value)
 
+	// Build final URL with path parameter substitution if configured
+	finalURL, err := h.parseURL(msg.Key)
+	if err != nil {
+		return err
+	}
+
 	// Execute HTTP request based on configured method
 	var res *resty.Response
 	switch h.method {
 	case "POST":
-		res, err = r.Post(h.url)
+		res, err = r.Post(finalURL)
 	case "PUT":
-		res, err = r.Put(h.url)
+		res, err = r.Put(finalURL)
 	case "PATCH":
-		res, err = r.Patch(h.url)
+		res, err = r.Patch(finalURL)
 	case "DELETE":
-		res, err = r.Delete(h.url)
+		res, err = r.Delete(finalURL)
 	default:
 		return fmt.Errorf("unsupported HTTP method: %s", h.method)
 	}
@@ -145,7 +182,7 @@ func (h *httpProcessor) Process(ctx context.Context, msg kafka.Message) error {
 
 	if res.StatusCode() >= 300 && h.errorWriter != nil {
 		if err := h.errorWriter.WriteError(ctx, msg.Key, &ErrorPayload{
-			ResponseBody:    fmt.Sprintf("%s", res.Body()),
+			ResponseBody:    string(res.Body()),
 			ResponseCode:    res.StatusCode(),
 			RequestBodyJSON: value,
 		}); err != nil {
@@ -265,4 +302,19 @@ func sanitizeKey(key []byte) string {
 		}
 	}
 	return builder.String()
+}
+
+// substitutePathParam replaces the path parameter placeholder with the provided value.
+// It looks for the placeholder (paramName) in the URL and replaces it with the encoded key.
+// The paramValue must be URL-encoded before calling this function.
+// Returns error if the placeholder is not found in the URL.
+// Example: substitutePathParam("http://api.com/v1/users/:id", ":id", "user123")
+// → "http://api.com/v1/users/user123", nil
+func substitutePathParam(urlStr, paramName, paramValue string) (string, error) {
+	if !strings.Contains(urlStr, paramName) {
+		return "", fmt.Errorf("path parameter placeholder %q not found in URL %q", paramName, urlStr)
+	}
+
+	finalURL := strings.ReplaceAll(urlStr, paramName, paramValue)
+	return finalURL, nil
 }
