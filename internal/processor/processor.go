@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 	"unicode"
 
@@ -88,6 +89,34 @@ func NewProcessor(conf *config.Config, logr *zap.Logger, errorWriter *kafka.Writ
 	}
 }
 
+// parseURL builds the final URL with path parameter substitution if configured.
+// It validates and sanitizes the message key, URL-encodes it, and substitutes it into the base URL.
+// Returns error if key is empty after sanitization or placeholder is not found in URL.
+func (h *httpProcessor) parseURL(msgKey []byte) (string, error) {
+	// If no path parameter is configured, return base URL
+	if h.pathParam == nil {
+		return h.url, nil
+	}
+
+	// Sanitize the message key
+	sanitizedKey := sanitizeKey(msgKey)
+	if sanitizedKey == "" {
+		err := fmt.Errorf("message key is empty after sanitization, cannot substitute path parameter %s", *h.pathParam)
+		return "", err
+	}
+
+	// URL-encode the sanitized key
+	encodedKey := url.PathEscape(sanitizedKey)
+
+	// Substitute the path parameter
+	finalURL, err := substitutePathParam(h.url, *h.pathParam, encodedKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to substitute path parameter: %w", err)
+	}
+
+	return finalURL, nil
+}
+
 func (h *httpProcessor) Process(ctx context.Context, msg kafka.Message) error {
 	var value []byte
 	var err error
@@ -127,9 +156,9 @@ func (h *httpProcessor) Process(ctx context.Context, msg kafka.Message) error {
 	r.SetBody(value)
 
 	// Build final URL with path parameter substitution if configured
-	finalURL := h.url
-	if h.pathParam != nil {
-		finalURL = substitutePathParam(h.url, *h.pathParam, sanitizeKey(msg.Key))
+	finalURL, err := h.parseURL(msg.Key)
+	if err != nil {
+		return err
 	}
 
 	// Execute HTTP request based on configured method
@@ -276,9 +305,16 @@ func sanitizeKey(key []byte) string {
 }
 
 // substitutePathParam replaces the path parameter placeholder with the provided value.
-// It looks for the placeholder (paramName) in the URL and replaces it with the sanitized key.
+// It looks for the placeholder (paramName) in the URL and replaces it with the encoded key.
+// The paramValue must be URL-encoded before calling this function.
+// Returns error if the placeholder is not found in the URL.
 // Example: substitutePathParam("http://api.com/v1/users/:id", ":id", "user123")
-// → "http://api.com/v1/users/user123"
-func substitutePathParam(url, paramName, paramValue string) string {
-	return strings.ReplaceAll(url, paramName, paramValue)
+// → "http://api.com/v1/users/user123", nil
+func substitutePathParam(urlStr, paramName, paramValue string) (string, error) {
+	if !strings.Contains(urlStr, paramName) {
+		return "", fmt.Errorf("path parameter placeholder %q not found in URL %q", paramName, urlStr)
+	}
+
+	finalURL := strings.ReplaceAll(urlStr, paramName, paramValue)
+	return finalURL, nil
 }
