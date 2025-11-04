@@ -28,6 +28,7 @@ type httpProcessor struct {
 	sr            *srclient.SchemaRegistryClient
 	url           string
 	method        string
+	pathParam     *string
 	logr          *zap.Logger
 	headers       []httpHeader
 	errorWriter   ErrorWriter
@@ -78,6 +79,7 @@ func NewProcessor(conf *config.Config, logr *zap.Logger, errorWriter *kafka.Writ
 		http:          r,
 		url:           conf.HttpApiUrl,
 		method:        method,
+		pathParam:     conf.HttpPathParam,
 		headers:       headers,
 		logr:          logr,
 		sr:            schemaRegistryClient,
@@ -124,17 +126,23 @@ func (h *httpProcessor) Process(ctx context.Context, msg kafka.Message) error {
 	// Set request body once
 	r.SetBody(value)
 
+	// Build final URL with path parameter substitution if configured
+	finalURL := h.url
+	if h.pathParam != nil {
+		finalURL = substitutePathParam(h.url, *h.pathParam, sanitizeKey(msg.Key))
+	}
+
 	// Execute HTTP request based on configured method
 	var res *resty.Response
 	switch h.method {
 	case "POST":
-		res, err = r.Post(h.url)
+		res, err = r.Post(finalURL)
 	case "PUT":
-		res, err = r.Put(h.url)
+		res, err = r.Put(finalURL)
 	case "PATCH":
-		res, err = r.Patch(h.url)
+		res, err = r.Patch(finalURL)
 	case "DELETE":
-		res, err = r.Delete(h.url)
+		res, err = r.Delete(finalURL)
 	default:
 		return fmt.Errorf("unsupported HTTP method: %s", h.method)
 	}
@@ -145,7 +153,7 @@ func (h *httpProcessor) Process(ctx context.Context, msg kafka.Message) error {
 
 	if res.StatusCode() >= 300 && h.errorWriter != nil {
 		if err := h.errorWriter.WriteError(ctx, msg.Key, &ErrorPayload{
-			ResponseBody:    fmt.Sprintf("%s", res.Body()),
+			ResponseBody:    string(res.Body()),
 			ResponseCode:    res.StatusCode(),
 			RequestBodyJSON: value,
 		}); err != nil {
@@ -265,4 +273,12 @@ func sanitizeKey(key []byte) string {
 		}
 	}
 	return builder.String()
+}
+
+// substitutePathParam replaces the path parameter placeholder with the provided value.
+// It looks for the placeholder (paramName) in the URL and replaces it with the sanitized key.
+// Example: substitutePathParam("http://api.com/v1/users/:id", ":id", "user123")
+// → "http://api.com/v1/users/user123"
+func substitutePathParam(url, paramName, paramValue string) string {
+	return strings.ReplaceAll(url, paramName, paramValue)
 }

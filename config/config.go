@@ -35,6 +35,11 @@ type Config struct {
 	HttpApiUrl  string      `envconfig:"HTTP_API_URL"`
 	HttpMethod  *string     `envconfig:"HTTP_METHOD"` // Default: POST
 	HttpHeaders *[]string   `envconfig:"HTTP_HEADERS"`
+	// PathParam determines which part of the message key to use as path parameter.
+	// If set, the `:param` placeholder in HttpApiUrl will be replaced with the message key.
+	// Example: HttpApiUrl="http://api.com/v1/users/:param" + message.key="user123"
+	// → "http://api.com/v1/users/user123"
+	HttpPathParam *string `envconfig:"HTTP_PATH_PARAM"`
 }
 
 var cfgSync sync.Once
