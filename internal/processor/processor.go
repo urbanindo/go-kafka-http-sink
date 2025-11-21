@@ -195,7 +195,7 @@ func (h *httpProcessor) Process(ctx context.Context, msg kafka.Message) error {
 	if h.successWriter != nil {
 		return h.successWriter.WriteMessages(ctx, kafka.Message{
 			Key:   msg.Key,
-			Value: value,
+			Value: res.Body(),
 		})
 	}
 	return nil
